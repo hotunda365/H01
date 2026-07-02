@@ -91,7 +91,7 @@ form.addEventListener('submit', async (event) => {
       response.ok
 
     if (succeeded) {
-      window.location.assign('/')
+      window.location.assign('/sessions')
       return
     }
 
