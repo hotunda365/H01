@@ -71,13 +71,24 @@ createServer(async (req, res) => {
       return
     }
 
-    if (isLocalStaticPath(pathname)) {
+    // "/" is always the login page (local dist).
+    if (pathname === '/') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         methodNotAllowed(res, 'GET, HEAD')
         return
       }
-      await serveStatic(req, res, pathname)
+      await serveStatic(req, res, '/')
       return
+    }
+
+    // For known local-static prefixes, try dist first; if the file isn't there,
+    // fall through to the proxy (so dashboard /assets/* work even though the
+    // login SPA also uses /assets/*).
+    if (isPotentialLocalStaticPath(pathname)) {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        const served = await tryServeStatic(req, res, pathname)
+        if (served) return
+      }
     }
 
     if (!isAuthenticated(req)) {
@@ -108,10 +119,36 @@ createServer(async (req, res) => {
     console.log(`Proxying authenticated traffic to: ${upstream.origin}`)
   })
 
-function isLocalStaticPath(pathname) {
-  if (pathname === '/' || pathname === '/favicon.svg' || pathname === '/favicon.ico') return true
+function isPotentialLocalStaticPath(pathname) {
+  if (pathname === '/favicon.svg' || pathname === '/favicon.ico') return true
   if (pathname.startsWith('/assets/')) return true
   return false
+}
+
+async function tryServeStatic(req, res, pathname) {
+  const filePath = normalize(join(distDir, `.${pathname}`))
+  if (!filePath.startsWith(distDir)) return false
+
+  try {
+    const fileStat = await stat(filePath)
+    if (!fileStat.isFile()) return false
+  } catch {
+    return false
+  }
+
+  const body = await readFile(filePath)
+  const contentType = mimeTypes.get(extname(filePath)) || 'application/octet-stream'
+  writeHeaders(res, 200, {
+    'Content-Type': contentType,
+    'Content-Length': body.length,
+    'Cache-Control': 'public, max-age=31536000, immutable',
+  })
+  if (req.method === 'HEAD') {
+    res.end()
+    return true
+  }
+  res.end(body)
+  return true
 }
 
 async function serveStatic(req, res, pathname) {
