@@ -16,7 +16,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </div>
       </div>
 
-      <p class="lede">Enter your credentials to open the Hermes dashboard.</p>
+      <p class="lede">Enter your credentials to access the agent.</p>
 
       <div id="login-error" class="error" role="alert" hidden></div>
 
@@ -47,7 +47,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <button id="login-submit" class="primary" type="submit">Sign in</button>
       </form>
 
-      <p class="footer">You will be sent to the Hermes dashboard after a successful sign-in.</p>
+      <p class="footer">Your session is private and for agent use only.</p>
     </section>
   </main>
 `
@@ -82,7 +82,6 @@ form.addEventListener('submit', async (event) => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
       redirect: 'manual',
-      credentials: 'include',
     })
 
     const succeeded =

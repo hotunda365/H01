@@ -2,28 +2,18 @@ import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { timingSafeEqual } from 'node:crypto'
 
 const rootDir = fileURLToPath(new URL('.', import.meta.url))
 const distDir = join(rootDir, 'dist')
 const port = Number(process.env.PORT || 4173)
 const authUser = process.env.BASIC_AUTH_USER
 const authPassword = process.env.BASIC_AUTH_PASSWORD
-const sessionMaxAgeSeconds = Number(process.env.SESSION_MAX_AGE || 60 * 60 * 8) // 8 hours
-const cookieName = 'hermes_auth'
-const cookieSecure = process.env.COOKIE_SECURE !== '0' // set COOKIE_SECURE=0 for local http testing
-let sessionSecret = process.env.SESSION_SECRET
+const dashboardUrl = process.env.DASHBOARD_URL || 'http://hermes-dashboard:5000/sessions'
 
 if (!authUser || !authPassword) {
   console.error('Missing BASIC_AUTH_USER or BASIC_AUTH_PASSWORD.')
   process.exit(1)
-}
-
-if (!sessionSecret) {
-  sessionSecret = randomBytes(32).toString('hex')
-  console.warn(
-    'SESSION_SECRET is not set. Generated an ephemeral secret; existing sessions will be invalidated on every restart. Set SESSION_SECRET in production.',
-  )
 }
 
 const mimeTypes = new Map([
@@ -47,16 +37,6 @@ createServer(async (req, res) => {
 
     if (pathname === '/login' && req.method === 'POST') {
       await handleLoginPost(req, res)
-      return
-    }
-
-    if (pathname === '/auth-check' && (req.method === 'GET' || req.method === 'HEAD')) {
-      handleAuthCheck(req, res)
-      return
-    }
-
-    if (pathname === '/logout') {
-      handleLogout(res)
       return
     }
 
@@ -100,7 +80,7 @@ createServer(async (req, res) => {
   }
 }).listen(port, () => {
   console.log(`Hermes login server running on http://localhost:${port}`)
-  console.log(`Session cookie: ${cookieName} (Secure=${cookieSecure}, max age ${sessionMaxAgeSeconds}s)`)
+  console.log(`Dashboard URL: ${dashboardUrl}`)
 })
 
 async function handleLoginPost(req, res) {
@@ -115,77 +95,8 @@ async function handleLoginPost(req, res) {
     return
   }
 
-  const cookieValue = issueSessionCookie(username)
-  writeHeaders(res, 302, {
-    Location: '/',
-    'Set-Cookie': cookieValue,
-  })
+  writeHeaders(res, 302, { Location: dashboardUrl })
   res.end()
-}
-
-function handleAuthCheck(req, res) {
-  if (verifySessionCookie(req.headers.cookie || '')) {
-    writeHeaders(res, 200, { 'Content-Type': 'text/plain; charset=utf-8' })
-    res.end('ok')
-    return
-  }
-  writeHeaders(res, 401, { 'Content-Type': 'text/plain; charset=utf-8' })
-  res.end('unauthorized')
-}
-
-function handleLogout(res) {
-  writeHeaders(res, 302, {
-    Location: '/login',
-    'Set-Cookie': buildCookie('', 0),
-  })
-  res.end()
-}
-
-function issueSessionCookie(username) {
-  const expiresAt = Math.floor(Date.now() / 1000) + sessionMaxAgeSeconds
-  const payload = `${base64UrlEncode(username)}.${expiresAt}`
-  const signature = sign(payload)
-  const value = `${payload}.${signature}`
-  return buildCookie(value, sessionMaxAgeSeconds)
-}
-
-function verifySessionCookie(cookieHeader) {
-  const value = parseCookie(cookieHeader, cookieName)
-  if (!value) return false
-  const parts = value.split('.')
-  if (parts.length !== 3) return false
-  const [encodedUser, expiresAtRaw, signature] = parts
-  const payload = `${encodedUser}.${expiresAtRaw}`
-  const expected = sign(payload)
-  if (!constantTimeMatch(signature, expected)) return false
-  const expiresAt = Number(expiresAtRaw)
-  if (!Number.isFinite(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) return false
-  return true
-}
-
-function buildCookie(value, maxAgeSeconds) {
-  const attributes = ['Path=/', 'HttpOnly', 'SameSite=Lax']
-  if (cookieSecure) attributes.push('Secure')
-  attributes.push(`Max-Age=${maxAgeSeconds}`)
-  return `${cookieName}=${value}; ${attributes.join('; ')}`
-}
-
-function parseCookie(header, name) {
-  if (!header) return null
-  const pairs = header.split(';')
-  for (const raw of pairs) {
-    const [rawName, ...rest] = raw.split('=')
-    if (rawName.trim() === name) return rest.join('=').trim()
-  }
-  return null
-}
-
-function sign(payload) {
-  return createHmac('sha256', sessionSecret).update(payload).digest('base64url')
-}
-
-function base64UrlEncode(input) {
-  return Buffer.from(String(input), 'utf8').toString('base64url')
 }
 
 function methodNotAllowed(res, allow) {
